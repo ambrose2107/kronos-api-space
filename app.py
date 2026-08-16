@@ -29,6 +29,7 @@ Response:
 }
 """
 import os
+import logging
 from datetime import timedelta
 from typing import List, Optional, Literal
 
@@ -37,6 +38,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from kronos_model import Kronos, KronosTokenizer, KronosPredictor
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("kronos-api")
 
 app = FastAPI(title="Kronos Forecast API")
 
@@ -102,23 +106,27 @@ def predict(req: PredictRequest):
     df["timestamps"] = pd.to_datetime(df["timestamps"], utc=True, errors="coerce")
     df = df.dropna(subset=["timestamps", "close"]).reset_index(drop=True)
 
-    predictor = _get_predictor(req.model)
-    max_ctx = MODEL_CONFIGS[req.model]["max_context"]
-    if len(df) > max_ctx:
-        df = df.iloc[-max_ctx:].reset_index(drop=True)
+    try:
+        predictor = _get_predictor(req.model)
+        max_ctx = MODEL_CONFIGS[req.model]["max_context"]
+        if len(df) > max_ctx:
+            df = df.iloc[-max_ctx:].reset_index(drop=True)
 
-    step = {"5m": timedelta(minutes=5), "15m": timedelta(minutes=15),
-            "1h": timedelta(hours=1), "4h": timedelta(hours=4)}.get(req.period, timedelta(days=1))
-    last_ts = df["timestamps"].iloc[-1]
-    y_timestamp = pd.Series([last_ts + step * (i + 1) for i in range(req.pred_len)])
+        step = {"5m": timedelta(minutes=5), "15m": timedelta(minutes=15),
+                "1h": timedelta(hours=1), "4h": timedelta(hours=4)}.get(req.period, timedelta(days=1))
+        last_ts = df["timestamps"].iloc[-1]
+        y_timestamp = pd.Series([last_ts + step * (i + 1) for i in range(req.pred_len)])
 
-    pred_df = predictor.predict(
-        df=df[["open", "high", "low", "close", "volume", "amount"]],
-        x_timestamp=df["timestamps"],
-        y_timestamp=y_timestamp,
-        pred_len=req.pred_len,
-        T=1.0, top_p=0.9, sample_count=req.sample_count,
-    )
+        pred_df = predictor.predict(
+            df=df[["open", "high", "low", "close", "volume", "amount"]],
+            x_timestamp=df["timestamps"],
+            y_timestamp=y_timestamp,
+            pred_len=req.pred_len,
+            T=1.0, top_p=0.9, sample_count=req.sample_count,
+        )
+    except Exception as e:
+        logger.exception("Kronos inference failed")
+        raise HTTPException(500, f"Kronos inference failed: {type(e).__name__}: {e}")
 
     last_close = float(df["close"].iloc[-1])
     forecast = [{
