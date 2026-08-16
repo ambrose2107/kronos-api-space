@@ -77,6 +77,14 @@ class PredictRequest(BaseModel):
     sample_count: int = 1
 
 
+@app.get("/")
+def root():
+    # Render's own health check hits "/" by default. Keep this trivially
+    # fast and dependency-free so it never fails even while the model is
+    # still loading elsewhere.
+    return {"service": "kronos-forecast-api", "status": "ok", "docs": "/health, /predict"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "model_loaded": list(_predictors.keys())}
